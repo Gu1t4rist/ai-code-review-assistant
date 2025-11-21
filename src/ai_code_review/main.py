@@ -1,6 +1,5 @@
 """Main application entry point."""
 
-import argparse
 import asyncio
 import sys
 from typing import Any
@@ -171,6 +170,8 @@ async def run_single_review(project_id: int, mr_iid: int) -> None:
 
 def cli() -> None:
     """Command-line interface."""
+    import argparse
+
     parser = argparse.ArgumentParser(description="AI Code Review Assistant")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
