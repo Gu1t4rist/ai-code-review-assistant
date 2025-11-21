@@ -95,10 +95,10 @@ class WebhookHandler:
             if self.settings.enable_auto_labeling:
                 from ai_code_review.gitlab.models import MergeRequestLabel
 
-                self.gitlab_client.add_labels(project_id, mr_iid, [MergeRequestLabel.IN_PROGRESS.value])
+                await self.gitlab_client.add_labels(project_id, mr_iid, [MergeRequestLabel.IN_PROGRESS.value])
 
             # Get MR information
-            mr_info = self.gitlab_client.get_merge_request_info(project_id, mr_iid)
+            mr_info = await self.gitlab_client.get_merge_request_info(project_id, mr_iid)
 
             # Perform review
             summary = await self.review_engine.review_merge_request(mr_info)
@@ -106,10 +106,10 @@ class WebhookHandler:
             # Post individual issue comments
             for issue in summary.issues:
                 if issue.severity in ["critical", "high"]:  # Only post critical and high issues as inline comments
-                    self.gitlab_client.post_issue_comment(project_id, mr_iid, issue)
+                    await self.gitlab_client.post_issue_comment(project_id, mr_iid, issue)
 
             # Post overall summary
-            self.gitlab_client.post_review_summary(project_id, mr_iid, summary)
+            await self.gitlab_client.post_review_summary(project_id, mr_iid, summary)
 
             logger.info("mr_review_completed", project_id=project_id, mr_iid=mr_iid)
 
@@ -117,7 +117,7 @@ class WebhookHandler:
             logger.error("mr_review_failed", error=str(e), project_id=project_id, mr_iid=mr_iid)
             # Try to post error comment
             try:
-                self.gitlab_client.post_comment(
+                await self.gitlab_client.post_comment(
                     project_id,
                     mr_iid,
                     f"❌ **AI Code Review Failed**\n\nAn error occurred during the automated review: {str(e)}\n\nPlease contact the development team.",

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # AI Provider Configuration
     ai_provider: Literal["openai", "anthropic", "azure"] = Field(
-        default="openai", description="AI provider to use"
+        default="anthropic", description="AI provider to use (anthropic recommended for code review)"
     )
     openai_api_key: str | None = Field(default=None, description="OpenAI API key")
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key")
@@ -33,8 +33,8 @@ class Settings(BaseSettings):
 
     # Model Configuration
     ai_model: str = Field(
-        default="gpt-4-turbo-preview",
-        description="AI model to use for code review",
+        default="claude-3-5-sonnet-20241022",
+        description="AI model to use for code review (claude-3-5-sonnet-20241022 or gpt-3.5-turbo for budget)",
     )
     ai_temperature: float = Field(
         default=0.3,
