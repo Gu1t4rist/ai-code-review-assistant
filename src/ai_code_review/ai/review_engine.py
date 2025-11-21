@@ -57,7 +57,7 @@ class CodeReviewEngine:
         all_issues: list[ReviewIssue] = []
 
         # Process files in parallel (with limit)
-        semaphore = asyncio.Semaphore(self.settings.max_concurrent_reviews)
+        semaphore = asyncio.Semaphore(3)  # Limit concurrent reviews
 
         async def review_with_semaphore(change: DiffChange) -> dict[str, Any] | None:
             async with semaphore:

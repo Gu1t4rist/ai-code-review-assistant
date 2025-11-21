@@ -1,12 +1,5 @@
 # AI Code Review Assistant
 
-[![CI](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/ci.yml)
-[![Docker Build](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/docker.yml/badge.svg)](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/docker.yml)
-[![Security Scan](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/security.yml/badge.svg)](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/security.yml)
-[![Code Quality](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/code-quality.yml/badge.svg)](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/code-quality.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
 AI-агент для автоматизации code review процессов в GitLab. Помогает сеньор-разработчикам проводить ревью кода, анализируя изменения в Merge Requests, проверяя их на соответствие стандартам и формируя рекомендации.
 
 ## Описание задачи
