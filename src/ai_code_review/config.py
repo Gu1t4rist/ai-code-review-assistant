@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # AI Provider Configuration
     ai_provider: Literal["openai", "anthropic", "azure"] = Field(
-        default="anthropic", description="AI provider to use (anthropic recommended for code review)"
+        default="anthropic", description="AI provider to use"
     )
     openai_api_key: str | None = Field(default=None, description="OpenAI API key")
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key")
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # Model Configuration
     ai_model: str = Field(
         default="claude-3-5-sonnet-20241022",
-        description="AI model to use for code review (claude-3-5-sonnet-20241022 or gpt-3.5-turbo for budget)",
+        description="AI model to use for code review",
     )
     ai_temperature: float = Field(
         default=0.3,
@@ -72,11 +72,25 @@ class Settings(BaseSettings):
     )
     min_files_for_review: int = Field(default=1, ge=1, description="Minimum files to trigger review")
     max_files_for_review: int = Field(default=50, ge=1, description="Maximum files to review")
+    max_concurrent_reviews: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum number of concurrent file reviews",
+    )
     min_test_coverage: int = Field(
         default=80,
         ge=0,
         le=100,
         description="Minimum test coverage percentage",
+    )
+    
+    # HTTP Configuration
+    http_timeout: float = Field(
+        default=30.0,
+        ge=5.0,
+        le=120.0,
+        description="HTTP request timeout in seconds",
     )
 
     # Feature Flags
