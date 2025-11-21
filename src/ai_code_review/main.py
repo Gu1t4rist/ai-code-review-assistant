@@ -101,9 +101,12 @@ async def trigger_review(data: dict[str, Any]) -> JSONResponse:
 @app.get("/api/v1/metrics")
 async def metrics() -> dict[str, Any]:
     """Get application metrics."""
+    settings = get_settings()
+    
     return {
-        "status": "metrics_not_implemented",
-        "message": "Metrics collection is not yet implemented",
+        "ai_provider": settings.ai_provider,
+        "ai_model": settings.ai_model,
+        "status": "running",
     }
 
 
@@ -135,7 +138,7 @@ async def run_single_review(project_id: int, mr_iid: int) -> None:
 
     try:
         # Get MR information
-        mr_info = gitlab_client.get_merge_request_info(project_id, mr_iid)
+        mr_info = await gitlab_client.get_merge_request_info(project_id, mr_iid)
         logger.info("mr_info_retrieved", title=mr_info.title)
 
         # Perform review
@@ -144,9 +147,9 @@ async def run_single_review(project_id: int, mr_iid: int) -> None:
         # Post results
         for issue in summary.issues:
             if issue.severity in ["critical", "high"]:
-                gitlab_client.post_issue_comment(project_id, mr_iid, issue)
+                await gitlab_client.post_issue_comment(project_id, mr_iid, issue)
 
-        gitlab_client.post_review_summary(project_id, mr_iid, summary)
+        await gitlab_client.post_review_summary(project_id, mr_iid, summary)
 
         logger.info("review_completed_successfully")
         print(f"\n✅ Review completed successfully!")
@@ -161,6 +164,8 @@ async def run_single_review(project_id: int, mr_iid: int) -> None:
         logger.error("review_failed", error=str(e))
         print(f"\n❌ Review failed: {e}")
         sys.exit(1)
+    finally:
+        await gitlab_client.close()
 
 
 def cli() -> None:

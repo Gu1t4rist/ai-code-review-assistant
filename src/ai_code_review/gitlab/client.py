@@ -2,8 +2,7 @@
 
 from typing import Any
 
-import gitlab
-from gitlab.v4.objects import Project, ProjectMergeRequest
+import httpx
 
 from ai_code_review.config import get_settings
 from ai_code_review.gitlab.models import (
@@ -20,63 +19,99 @@ logger = get_logger(__name__)
 
 
 class GitLabClient:
-    """Client for GitLab API operations."""
+    """Async client for GitLab API operations."""
 
     def __init__(self) -> None:
         """Initialize GitLab client."""
         settings = get_settings()
-        self.gl = gitlab.Gitlab(
-            url=settings.gitlab_url,
-            private_token=settings.gitlab_token,
-            ssl_verify=settings.webhook_verify_ssl,
+        self.base_url = settings.gitlab_url.rstrip("/")
+        self.token = settings.gitlab_token
+        self.verify_ssl = settings.webhook_verify_ssl
+        
+        # Create async client with connection pooling
+        self.client = httpx.AsyncClient(
+            base_url=f"{self.base_url}/api/v4",
+            headers={
+                "PRIVATE-TOKEN": self.token,
+                "Content-Type": "application/json",
+            },
+            verify=self.verify_ssl,
+            timeout=30.0,
         )
-        self.gl.auth()
-        logger.info("gitlab_client_initialized", url=settings.gitlab_url)
+        logger.info("gitlab_client_initialized", url=self.base_url)
+    
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.close()
+    
+    async def close(self) -> None:
+        """Close the HTTP client."""
+        await self.client.aclose()
 
-    def get_project(self, project_id: int) -> Project:
+    async def get_project(self, project_id: int) -> dict[str, Any]:
         """Get a GitLab project by ID."""
         logger.debug("fetching_project", project_id=project_id)
-        project = self.gl.projects.get(project_id)
-        logger.info("project_fetched", project_id=project_id, project_name=project.name)
+        response = await self.client.get(f"/projects/{project_id}")
+        response.raise_for_status()
+        project = response.json()
+        logger.info("project_fetched", project_id=project_id, project_name=project.get("name"))
         return project
 
-    def get_merge_request(self, project_id: int, mr_iid: int) -> ProjectMergeRequest:
+    async def get_merge_request(self, project_id: int, mr_iid: int) -> dict[str, Any]:
         """Get a merge request by project ID and MR IID."""
         logger.debug("fetching_merge_request", project_id=project_id, mr_iid=mr_iid)
-        project = self.get_project(project_id)
-        mr = project.mergerequests.get(mr_iid)
+        response = await self.client.get(f"/projects/{project_id}/merge_requests/{mr_iid}")
+        response.raise_for_status()
+        mr = response.json()
         logger.info(
             "merge_request_fetched",
             project_id=project_id,
             mr_iid=mr_iid,
-            mr_title=mr.title,
+            mr_title=mr.get("title"),
         )
         return mr
 
-    def get_merge_request_info(self, project_id: int, mr_iid: int) -> MergeRequestInfo:
+    async def get_merge_request_changes(self, project_id: int, mr_iid: int) -> dict[str, Any]:
+        """Get merge request changes (diffs)."""
+        logger.debug("fetching_mr_changes", project_id=project_id, mr_iid=mr_iid)
+        response = await self.client.get(f"/projects/{project_id}/merge_requests/{mr_iid}/changes")
+        response.raise_for_status()
+        return response.json()
+
+    async def get_merge_request_info(self, project_id: int, mr_iid: int) -> MergeRequestInfo:
         """Get detailed merge request information including changes."""
         logger.info("getting_mr_info", project_id=project_id, mr_iid=mr_iid)
-        mr = self.get_merge_request(project_id, mr_iid)
+        
+        # Fetch MR data and changes in parallel
+        import asyncio
+        mr, changes_data = await asyncio.gather(
+            self.get_merge_request(project_id, mr_iid),
+            self.get_merge_request_changes(project_id, mr_iid),
+        )
 
-        # Get changes (diff)
-        changes = self._parse_changes(mr.changes())
+        # Parse changes
+        changes = self._parse_changes(changes_data)
 
         return MergeRequestInfo(
-            id=mr.id,
-            iid=mr.iid,
+            id=mr["id"],
+            iid=mr["iid"],
             project_id=project_id,
-            title=mr.title,
-            description=mr.description,
-            state=MergeRequestState(mr.state),
-            source_branch=mr.source_branch,
-            target_branch=mr.target_branch,
-            author=mr.author,
-            created_at=mr.created_at,
-            updated_at=mr.updated_at,
-            web_url=mr.web_url,
+            title=mr["title"],
+            description=mr.get("description", ""),
+            state=MergeRequestState(mr["state"]),
+            source_branch=mr["source_branch"],
+            target_branch=mr["target_branch"],
+            author=mr["author"],
+            created_at=mr["created_at"],
+            updated_at=mr["updated_at"],
+            web_url=mr["web_url"],
             changes=changes,
-            labels=mr.labels,
-            has_conflicts=mr.has_conflicts,
+            labels=mr.get("labels", []),
+            has_conflicts=mr.get("has_conflicts", False),
         )
 
     def _parse_changes(self, changes_data: dict[str, Any]) -> list[DiffChange]:
@@ -102,7 +137,7 @@ class GitLabClient:
         logger.debug("parsed_changes", total_files=len(changes))
         return changes
 
-    def post_comment(
+    async def post_comment(
         self,
         project_id: int,
         mr_iid: int,
@@ -118,71 +153,89 @@ class GitLabClient:
             has_line_ref=bool(file_path and line_number),
         )
 
-        mr = self.get_merge_request(project_id, mr_iid)
-
         if file_path and line_number:
-            # Post inline comment
+            # Try to post inline comment
             try:
-                # Get the latest commit
-                commits = mr.commits()
-                if commits:
-                    latest_commit = commits[-1]
-                    discussion = mr.discussions.create(
-                        {
-                            "body": comment,
-                            "position": {
-                                "position_type": "text",
-                                "new_path": file_path,
-                                "new_line": line_number,
-                                "base_sha": mr.diff_refs["base_sha"],
-                                "start_sha": mr.diff_refs["start_sha"],
-                                "head_sha": mr.diff_refs["head_sha"],
-                            },
-                        }
+                mr = await self.get_merge_request(project_id, mr_iid)
+                diff_refs = mr.get("diff_refs", {})
+                
+                if diff_refs:
+                    # Create discussion with position
+                    payload = {
+                        "body": comment,
+                        "position": {
+                            "position_type": "text",
+                            "new_path": file_path,
+                            "new_line": line_number,
+                            "base_sha": diff_refs.get("base_sha"),
+                            "start_sha": diff_refs.get("start_sha"),
+                            "head_sha": diff_refs.get("head_sha"),
+                        },
+                    }
+                    response = await self.client.post(
+                        f"/projects/{project_id}/merge_requests/{mr_iid}/discussions",
+                        json=payload,
                     )
-                    logger.info("inline_comment_posted", discussion_id=discussion.id)
+                    response.raise_for_status()
+                    logger.info("inline_comment_posted")
+                    return
             except Exception as e:
                 logger.warning("failed_to_post_inline_comment", error=str(e))
-                # Fallback to regular comment
-                mr.notes.create({"body": f"**File: {file_path}:{line_number}**\n\n{comment}"})
-        else:
-            # Post general comment
-            mr.notes.create({"body": comment})
-            logger.info("general_comment_posted")
+                # Fallback to regular comment with file reference
+                comment = f"**File: {file_path}:{line_number}**\n\n{comment}"
 
-    def add_labels(self, project_id: int, mr_iid: int, labels: list[str]) -> None:
+        # Post general comment (note)
+        payload = {"body": comment}
+        response = await self.client.post(
+            f"/projects/{project_id}/merge_requests/{mr_iid}/notes",
+            json=payload,
+        )
+        response.raise_for_status()
+        logger.info("general_comment_posted")
+
+    async def add_labels(self, project_id: int, mr_iid: int, labels: list[str]) -> None:
         """Add labels to a merge request."""
         logger.info("adding_labels", project_id=project_id, mr_iid=mr_iid, labels=labels)
-        mr = self.get_merge_request(project_id, mr_iid)
+        
+        # Get current MR to fetch existing labels
+        mr = await self.get_merge_request(project_id, mr_iid)
+        current_labels = set(mr.get("labels", []))
+        new_labels = list(current_labels.union(set(labels)))
 
-        # Get current labels and add new ones
-        current_labels = set(mr.labels)
-        new_labels = current_labels.union(set(labels))
-
-        mr.labels = list(new_labels)
-        mr.save()
+        # Update MR with new labels
+        payload = {"labels": ",".join(new_labels)}
+        response = await self.client.put(
+            f"/projects/{project_id}/merge_requests/{mr_iid}",
+            json=payload,
+        )
+        response.raise_for_status()
         logger.info("labels_added", total_labels=len(new_labels))
 
-    def remove_labels(self, project_id: int, mr_iid: int, labels: list[str]) -> None:
+    async def remove_labels(self, project_id: int, mr_iid: int, labels: list[str]) -> None:
         """Remove labels from a merge request."""
         logger.info("removing_labels", project_id=project_id, mr_iid=mr_iid, labels=labels)
-        mr = self.get_merge_request(project_id, mr_iid)
+        
+        # Get current MR to fetch existing labels
+        mr = await self.get_merge_request(project_id, mr_iid)
+        current_labels = set(mr.get("labels", []))
+        new_labels = list(current_labels - set(labels))
 
-        # Remove specified labels
-        current_labels = set(mr.labels)
-        new_labels = current_labels - set(labels)
-
-        mr.labels = list(new_labels)
-        mr.save()
+        # Update MR with remaining labels
+        payload = {"labels": ",".join(new_labels)}
+        response = await self.client.put(
+            f"/projects/{project_id}/merge_requests/{mr_iid}",
+            json=payload,
+        )
+        response.raise_for_status()
         logger.info("labels_removed", remaining_labels=len(new_labels))
 
-    def update_labels_for_review(self, project_id: int, mr_iid: int, summary: ReviewSummary) -> None:
+    async def update_labels_for_review(self, project_id: int, mr_iid: int, summary: ReviewSummary) -> None:
         """Update MR labels based on review summary."""
         logger.info("updating_review_labels", project_id=project_id, mr_iid=mr_iid)
 
         # Remove all AI review labels
         all_review_labels = [label.value for label in MergeRequestLabel]
-        self.remove_labels(project_id, mr_iid, all_review_labels)
+        await self.remove_labels(project_id, mr_iid, all_review_labels)
 
         # Add labels based on recommendation
         labels_to_add = []
@@ -202,11 +255,11 @@ class GitLabClient:
             labels_to_add.append(MergeRequestLabel.PERFORMANCE_ISSUES.value)
 
         if labels_to_add:
-            self.add_labels(project_id, mr_iid, labels_to_add)
+            await self.add_labels(project_id, mr_iid, labels_to_add)
 
         logger.info("review_labels_updated", labels=labels_to_add)
 
-    def post_review_summary(self, project_id: int, mr_iid: int, summary: ReviewSummary) -> None:
+    async def post_review_summary(self, project_id: int, mr_iid: int, summary: ReviewSummary) -> None:
         """Post a comprehensive review summary as a comment."""
         logger.info("posting_review_summary", project_id=project_id, mr_iid=mr_iid)
 
@@ -214,10 +267,10 @@ class GitLabClient:
         comment = self._format_summary_comment(summary)
 
         # Post the summary
-        self.post_comment(project_id, mr_iid, comment)
+        await self.post_comment(project_id, mr_iid, comment)
 
         # Update labels
-        self.update_labels_for_review(project_id, mr_iid, summary)
+        await self.update_labels_for_review(project_id, mr_iid, summary)
 
         logger.info("review_summary_posted")
 
@@ -276,7 +329,7 @@ class GitLabClient:
 
         return "\n".join(lines)
 
-    def post_issue_comment(self, project_id: int, mr_iid: int, issue: ReviewIssue) -> None:
+    async def post_issue_comment(self, project_id: int, mr_iid: int, issue: ReviewIssue) -> None:
         """Post a comment for a specific review issue."""
         logger.debug(
             "posting_issue_comment",
@@ -290,7 +343,7 @@ class GitLabClient:
         comment = self._format_issue_comment(issue)
 
         # Post the comment
-        self.post_comment(project_id, mr_iid, comment, issue.file_path, issue.line_number)
+        await self.post_comment(project_id, mr_iid, comment, issue.file_path, issue.line_number)
 
     def _format_issue_comment(self, issue: ReviewIssue) -> str:
         """Format a review issue as a markdown comment."""
