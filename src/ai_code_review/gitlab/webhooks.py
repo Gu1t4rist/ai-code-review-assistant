@@ -9,7 +9,7 @@ from fastapi import HTTPException, Request
 from ai_code_review.ai.review_engine import CodeReviewEngine
 from ai_code_review.config import get_settings
 from ai_code_review.gitlab.client import GitLabClient
-from ai_code_review.gitlab.models import WebhookEvent
+from ai_code_review.gitlab.models import MergeRequestLabel, WebhookEvent
 from ai_code_review.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -93,8 +93,6 @@ class WebhookHandler:
         try:
             # Add in-progress label
             if self.settings.enable_auto_labeling:
-                from ai_code_review.gitlab.models import MergeRequestLabel
-
                 await self.gitlab_client.add_labels(project_id, mr_iid, [MergeRequestLabel.IN_PROGRESS.value])
 
             # Get MR information

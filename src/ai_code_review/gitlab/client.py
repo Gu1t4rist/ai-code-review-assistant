@@ -1,5 +1,6 @@
 """GitLab API client for interacting with GitLab."""
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -36,7 +37,7 @@ class GitLabClient:
                 "Content-Type": "application/json",
             },
             verify=self.verify_ssl,
-            timeout=30.0,
+            timeout=settings.http_timeout,
         )
         logger.info("gitlab_client_initialized", url=self.base_url)
     
@@ -87,7 +88,6 @@ class GitLabClient:
         logger.info("getting_mr_info", project_id=project_id, mr_iid=mr_iid)
         
         # Fetch MR data and changes in parallel
-        import asyncio
         mr, changes_data = await asyncio.gather(
             self.get_merge_request(project_id, mr_iid),
             self.get_merge_request_changes(project_id, mr_iid),
