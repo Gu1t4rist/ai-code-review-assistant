@@ -37,9 +37,6 @@ AI-агент для автоматизации code review процессов �
 ### Бизнес
 - Уменьшение среднего времени, затрачиваемого сеньорами на ревью
 
-### Usability
-- Доля разработчиков, которые начали использовать агента без дополнительного обучения или инструкций
-
 ## Архитектура
 
 ```
@@ -47,59 +44,52 @@ ai-code-review-assistant/
 ├── src/
 │   └── ai_code_review/
 │       ├── __init__.py
-│       ├── main.py                 # Основная точка входа
+│       ├── main.py                 # Точка входа (CLI + FastAPI)
 │       ├── config.py               # Конфигурация приложения
 │       ├── gitlab/
 │       │   ├── __init__.py
-│       │   ├── client.py           # GitLab API клиент
+│       │   ├── client.py           # Async GitLab API клиент (httpx)
 │       │   ├── models.py           # Модели данных GitLab
 │       │   └── webhooks.py         # Обработка вебхуков
-│       ├── analysis/
-│       │   ├── __init__.py
-│       │   ├── code_analyzer.py    # Анализатор кода
-│       │   ├── diff_parser.py      # Парсер diff'ов
-│       │   ├── standards.py        # Проверка стандартов
-│       │   └── security.py         # Проверка безопасности
 │       ├── ai/
 │       │   ├── __init__.py
 │       │   ├── review_engine.py    # AI движок для ревью
 │       │   ├── prompts.py          # Промпты для LLM
 │       │   └── llm_client.py       # Клиент для LLM (OpenAI, Anthropic)
-│       ├── reporting/
-│       │   ├── __init__.py
-│       │   ├── summary.py          # Генерация резюме
-│       │   └── comments.py         # Формирование комментариев
 │       └── utils/
 │           ├── __init__.py
-│           ├── logger.py           # Логирование
-│           └── metrics.py          # Сбор метрик
+│           ├── logger.py           # Структурированное логирование
+│           └── metrics.py          # Prometheus метрики
 ├── tests/
 │   ├── __init__.py
+│   ├── conftest.py
 │   ├── test_gitlab_client.py
-│   ├── test_code_analyzer.py
+│   ├── test_llm_client.py
 │   ├── test_review_engine.py
-│   └── fixtures/
-├── config/
-│   ├── standards.yaml              # Стандарты кодирования
-│   └── prompts.yaml                # Промпты для AI
-├── docker/
-│   ├── Dockerfile
-│   └── docker-compose.yml
+│   └── test_metrics.py
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                  # Lint + Test
+│       ├── docker.yml              # Docker build & push
+│       ├── security.yml            # Security scan
+│       └── code-quality.yml        # Code quality checks
 ├── .env.example
 ├── .gitignore
+├── Dockerfile
+├── docker-compose.yml
 ├── pyproject.toml
 ├── requirements.txt
-├── setup.py
 └── README.md
 ```
 
 ## Технологический стек
 
 - **Python 3.11+**
-- **GitLab API**: python-gitlab
+- **GitLab API**: httpx (async)
 - **AI/LLM**: OpenAI API, Anthropic Claude API
 - **Web Framework**: FastAPI (для вебхуков)
 - **Async**: asyncio, aiohttp
+- **Monitoring**: Prometheus metrics
 - **Testing**: pytest, pytest-asyncio
 - **Code Analysis**: ast, pylint, flake8
 - **Docker**: для контейнеризации
@@ -196,16 +186,65 @@ docker-compose up -d
 
 ```bash
 # Анализ конкретного MR
-python -m src.ai_code_review.main review \
-  --project-id 123 \
-  --mr-iid 45 \
-  --verbose
+ai-code-review review --project-id 123 --mr-iid 45
 
-# Анализ с конкретными проверками
-python -m src.ai_code_review.main review \
-  --project-id 123 \
-  --mr-iid 45 \
-  --checks security,performance,style
+# Или через python
+python -m ai_code_review.main review --project-id 123 --mr-iid 45
+```
+
+## Примеры использования
+
+### Webhook Response Example
+
+Когда GitLab отправляет webhook на создание MR:
+
+```json
+{
+  "object_kind": "merge_request",
+  "project": {"id": 123},
+  "object_attributes": {
+    "iid": 45,
+    "title": "Add user authentication",
+    "state": "opened",
+    "action": "open"
+  }
+}
+```
+
+Агент автоматически:
+1. ✅ Получает diff всех измененных файлов
+2. ✅ Анализирует код с помощью AI (Claude/GPT)
+3. ✅ Находит проблемы безопасности, производительности, стиля
+4. ✅ Оставляет inline комментарии в коде
+5. ✅ Добавляет общее резюме с рекомендацией
+6. ✅ Устанавливает метки (`ai-review:approved`, `ai-review:needs-fixes`, etc.)
+
+### Manual Review Example
+
+```bash
+# Запустить review для MR #45 в проекте 123
+ai-code-review review --project-id 123 --mr-iid 45
+
+# Output:
+# ✅ Review completed successfully!
+# Recommendation: needs_fixes
+# Total issues: 8
+#   Critical: 1
+#   High: 2
+#   Medium: 3
+#   Low: 2
+```
+
+### Metrics Monitoring
+
+```bash
+# Проверить метрики Prometheus
+curl http://localhost:8000/metrics
+
+# Примеры метрик:
+# code_review_total{ai_provider="anthropic",status="success"} 42
+# code_review_duration_seconds_sum 847.3
+# ai_tokens_used_total{provider="anthropic",token_type="input"} 1847293
 ```
 
 ### 4. API Endpoints
@@ -331,26 +370,9 @@ Please address critical and medium severity issues before merging.
 - `ai-review:security-risk` - Обнаружены проблемы безопасности
 - `ai-review:performance-issues` - Проблемы производительности
 
-## Конфигурация стандартов
+## Мониторинг
 
-Файл `config/standards.yaml`:
-
-```yaml
-code_standards:
-  python:
-    max_line_length: 120
-    max_function_length: 50
-    max_complexity: 10
-    required_docstrings: true
-    
-  javascript:
-    max_line_length: 100
-    use_strict: true
-    prefer_const: true
-
-security:
-  scan_secrets: true
-  check_dependencies: true
+Prometheus metrics доступны на `/metrics`:
   sql_injection_detection: true
   xss_detection: true
 
@@ -434,30 +456,26 @@ mypy src/
 **Решение**:
 1. Увеличьте `MAX_DIFF_SIZE` в `.env`
 2. Используйте более быстрый LLM provider
-3. Включите кэширование анализов
-4. Оптимизируйте промпты
+3. Настройте `MAX_CONCURRENT_REVIEWS` для параллелизма
+4. Оптимизируйте промпты в `src/ai_code_review/ai/prompts.py`
 
 ### Проблема: Много false positives
 
 **Решение**:
-1. Настройте `config/standards.yaml` под ваши стандарты
-2. Обновите промпты в `config/prompts.yaml`
-3. Добавьте исключения для специфичных паттернов
-4. Используйте feedback loop для улучшения модели
+1. Настройте параметры AI модели в `.env` (temperature, max_tokens)
+2. Обновите промпты в `src/ai_code_review/ai/prompts.py`
+3. Используйте более точную модель (например, Claude 3.5 Sonnet)
+4. Добавьте игнорирование для специфичных файлов
 
 ## Roadmap
 
-- [ ] v1.0: Базовый функционал ревью
-- [ ] v1.1: Поддержка множественных языков программирования
-- [ ] v1.2: Интеграция с Jira/YouTrack
+- [x] v1.0: Базовый функционал ревью
+- [x] v1.1: Async архитектура с httpx
+- [x] v1.2: Prometheus metrics для мониторинга
 - [ ] v1.3: Обучение на feedback от разработчиков
 - [ ] v2.0: Поддержка GitHub и Bitbucket
 - [ ] v2.1: Автоматическое исправление простых ошибок
 - [ ] v2.2: Интеграция с CI/CD pipeline
-
-## Лицензия
-
-MIT License
 
 ## Контакты
 

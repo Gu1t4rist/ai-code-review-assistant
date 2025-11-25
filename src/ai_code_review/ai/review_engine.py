@@ -1,6 +1,7 @@
 """AI-powered code review engine."""
 
 import asyncio
+import time
 from typing import Any
 
 from ai_code_review.ai.llm_client import get_llm_client
@@ -23,6 +24,13 @@ from ai_code_review.gitlab.models import (
     ReviewSummary,
 )
 from ai_code_review.utils.logger import get_logger
+from ai_code_review.utils.metrics import (
+    active_reviews,
+    review_duration_seconds,
+    review_files_processed,
+    review_issues_found,
+    review_total,
+)
 
 logger = get_logger(__name__)
 
@@ -44,59 +52,95 @@ class CodeReviewEngine:
             mr_iid=mr_info.iid,
             files_changed=len(mr_info.changes),
         )
+        
+        start_time = time.time()
+        active_reviews.inc()
+        status = "success"
 
-        # Filter changes based on settings
-        changes_to_review = self._filter_changes(mr_info.changes)
+        try:
+            # Filter changes based on settings
+            changes_to_review = self._filter_changes(mr_info.changes)
 
-        if not changes_to_review:
-            logger.warning("no_changes_to_review")
-            return self._create_empty_summary(mr_info)
+            if not changes_to_review:
+                logger.warning("no_changes_to_review")
+                return self._create_empty_summary(mr_info)
 
-        # Review each file
-        file_reviews: list[dict[str, Any]] = []
-        all_issues: list[ReviewIssue] = []
+            # Track files processed
+            review_files_processed.labels(
+                ai_provider=self.settings.ai_provider,
+            ).observe(len(changes_to_review))
 
-        # Process files in parallel (with limit)
-        semaphore = asyncio.Semaphore(self.settings.max_concurrent_reviews)
+            # Review each file
+            file_reviews: list[dict[str, Any]] = []
+            all_issues: list[ReviewIssue] = []
 
-        async def review_with_semaphore(change: DiffChange) -> dict[str, Any] | None:
-            async with semaphore:
-                return await self._review_file_change(change, mr_info)
+            # Process files in parallel (with limit)
+            semaphore = asyncio.Semaphore(self.settings.max_concurrent_reviews)
 
-        review_tasks = [review_with_semaphore(change) for change in changes_to_review]
-        file_reviews_results = await asyncio.gather(*review_tasks, return_exceptions=True)
+            async def review_with_semaphore(change: DiffChange) -> dict[str, Any] | None:
+                async with semaphore:
+                    return await self._review_file_change(change, mr_info)
 
-        for result in file_reviews_results:
-            if isinstance(result, Exception):
-                logger.error("file_review_failed", error=str(result))
-                continue
-            if result:
-                file_reviews.append(result)
-                all_issues.extend(result.get("issues", []))
+            review_tasks = [review_with_semaphore(change) for change in changes_to_review]
+            file_reviews_results = await asyncio.gather(*review_tasks, return_exceptions=True)
 
-        # Additional analyses if enabled
-        if self.settings.enable_security_scan:
-            security_issues = await self._perform_security_scan(changes_to_review)
-            all_issues.extend(security_issues)
+            for result in file_reviews_results:
+                if isinstance(result, Exception):
+                    logger.error("file_review_failed", error=str(result))
+                    continue
+                if result:
+                    file_reviews.append(result)
+                    all_issues.extend(result.get("issues", []))
 
-        if self.settings.enable_performance_check:
-            performance_issues = await self._perform_performance_check(changes_to_review)
-            all_issues.extend(performance_issues)
+            # Additional analyses if enabled
+            if self.settings.enable_security_scan:
+                security_issues = await self._perform_security_scan(changes_to_review)
+                all_issues.extend(security_issues)
 
-        # Analyze test coverage
-        test_coverage = await self._analyze_test_coverage(mr_info)
+            if self.settings.enable_performance_check:
+                performance_issues = await self._perform_performance_check(changes_to_review)
+                all_issues.extend(performance_issues)
 
-        # Generate overall summary
-        summary = await self._generate_summary(mr_info, file_reviews, all_issues, test_coverage)
+            # Analyze test coverage
+            test_coverage = await self._analyze_test_coverage(mr_info)
 
-        logger.info(
-            "mr_review_completed",
-            recommendation=summary.recommendation,
-            total_issues=len(summary.issues),
-            critical_issues=len(summary.critical_issues),
-        )
+            # Generate overall summary
+            summary = await self._generate_summary(mr_info, file_reviews, all_issues, test_coverage)
+            
+            # Track issues by severity
+            for issue in all_issues:
+                review_issues_found.labels(
+                    severity=issue.severity.value,
+                    ai_provider=self.settings.ai_provider,
+                ).inc()
 
-        return summary
+            logger.info(
+                "mr_review_completed",
+                recommendation=summary.recommendation,
+                total_issues=len(summary.issues),
+                critical_issues=len(summary.critical_issues),
+            )
+
+            return summary
+        
+        except Exception as e:
+            status = "error"
+            raise
+        finally:
+            # Record metrics
+            duration = time.time() - start_time
+            review_duration_seconds.labels(
+                ai_provider=self.settings.ai_provider,
+                ai_model=self.settings.ai_model,
+            ).observe(duration)
+            
+            review_total.labels(
+                ai_provider=self.settings.ai_provider,
+                ai_model=self.settings.ai_model,
+                status=status,
+            ).inc()
+            
+            active_reviews.dec()
 
     def _filter_changes(self, changes: list[DiffChange]) -> list[DiffChange]:
         """Filter changes based on review settings."""

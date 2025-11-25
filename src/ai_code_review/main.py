@@ -3,11 +3,13 @@
 import argparse
 import asyncio
 import sys
+import time
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from ai_code_review.ai.review_engine import CodeReviewEngine
 from ai_code_review.config import get_settings
@@ -15,10 +17,44 @@ from ai_code_review.gitlab.client import GitLabClient
 from ai_code_review.gitlab.models import WebhookEvent
 from ai_code_review.gitlab.webhooks import WebhookHandler
 from ai_code_review.utils.logger import configure_logging, get_logger
+from ai_code_review.utils.metrics import (
+    get_metrics,
+    http_request_duration_seconds,
+    http_requests_total,
+    webhook_events_total,
+)
 
 # Configure logging
 configure_logging()
 logger = get_logger(__name__)
+
+
+class MetricsMiddleware(BaseHTTPMiddleware):
+    """Middleware to track HTTP request metrics."""
+
+    async def dispatch(self, request: Request, call_next):
+        """Track request metrics."""
+        start_time = time.time()
+        
+        # Process request
+        response = await call_next(request)
+        
+        # Record metrics
+        duration = time.time() - start_time
+        
+        http_requests_total.labels(
+            method=request.method,
+            endpoint=request.url.path,
+            status_code=response.status_code,
+        ).inc()
+        
+        http_request_duration_seconds.labels(
+            method=request.method,
+            endpoint=request.url.path,
+        ).observe(duration)
+        
+        return response
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -26,6 +62,9 @@ app = FastAPI(
     description="AI-powered code review automation for GitLab",
     version="1.0.0",
 )
+
+# Add metrics middleware
+app.add_middleware(MetricsMiddleware)
 
 # Initialize handlers
 webhook_handler = WebhookHandler()
@@ -50,6 +89,7 @@ async def health() -> dict[str, str]:
 @app.post("/webhook")
 async def webhook(request: Request) -> JSONResponse:
     """GitLab webhook endpoint."""
+    event_type = "unknown"
     try:
         # Verify webhook
         await webhook_handler.verify_webhook(request)
@@ -57,15 +97,29 @@ async def webhook(request: Request) -> JSONResponse:
         # Parse event
         body = await request.json()
         event = WebhookEvent(**body)
+        event_type = event.object_kind
 
         # Handle event in background
         result = await webhook_handler.handle_webhook(event)
+        
+        webhook_events_total.labels(
+            event_type=event_type,
+            status="success",
+        ).inc()
 
         return JSONResponse(content=result)
 
     except HTTPException:
+        webhook_events_total.labels(
+            event_type=event_type,
+            status="error",
+        ).inc()
         raise
     except Exception as e:
+        webhook_events_total.labels(
+            event_type=event_type,
+            status="error",
+        ).inc()
         logger.error("webhook_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -99,15 +153,25 @@ async def trigger_review(data: dict[str, Any]) -> JSONResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/metrics")
-async def metrics() -> dict[str, Any]:
-    """Get application metrics."""
+@app.get("/metrics")
+async def prometheus_metrics() -> Response:
+    """Prometheus metrics endpoint."""
+    return Response(
+        content=get_metrics(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@app.get("/api/v1/stats")
+async def stats() -> dict[str, Any]:
+    """Get application statistics."""
     settings = get_settings()
     
     return {
         "ai_provider": settings.ai_provider,
         "ai_model": settings.ai_model,
         "status": "running",
+        "version": "1.0.0",
     }
 
 

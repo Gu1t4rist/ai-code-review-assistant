@@ -1,5 +1,18 @@
 """Test configuration and fixtures."""
 
+import os
+
+# Set ALL required test environment variables FIRST before any imports
+os.environ.setdefault("GITLAB_URL", "https://gitlab.test.com")
+os.environ.setdefault("GITLAB_TOKEN", "test-token-123")
+os.environ.setdefault("GITLAB_WEBHOOK_SECRET", "test-webhook-secret")
+os.environ.setdefault("WEBHOOK_SECRET", "test-webhook-secret")
+os.environ.setdefault("AI_PROVIDER", "anthropic")
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-key-123")
+os.environ.setdefault("AI_MODEL", "claude-3-5-sonnet-20241022")
+os.environ.setdefault("AI_TEMPERATURE", "0.3")
+os.environ.setdefault("AI_MAX_TOKENS", "4000")
+
 import pytest
 from unittest.mock import MagicMock
 

@@ -1,6 +1,7 @@
 """LLM client for AI-powered code review."""
 
 import json
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -10,6 +11,11 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ai_code_review.config import get_settings
 from ai_code_review.utils.logger import get_logger
+from ai_code_review.utils.metrics import (
+    ai_api_calls_total,
+    ai_api_duration_seconds,
+    ai_tokens_used,
+)
 
 logger = get_logger(__name__)
 
@@ -46,19 +52,52 @@ class OpenAIClient(BaseLLMClient):
     async def generate_completion(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate a completion from OpenAI."""
         logger.debug("generating_openai_completion")
+        
+        start_time = time.time()
+        status = "success"
 
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        try:
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
 
-        response = await self.client.chat.completions.create(
-            model=self.model, messages=messages, temperature=self.temperature, max_tokens=self.max_tokens
-        )
+            response = await self.client.chat.completions.create(
+                model=self.model, messages=messages, temperature=self.temperature, max_tokens=self.max_tokens
+            )
 
-        content = response.choices[0].message.content or ""
-        logger.info("openai_completion_generated", tokens=response.usage.total_tokens if response.usage else 0)
-        return content
+            content = response.choices[0].message.content or ""
+            
+            # Track token usage
+            if response.usage:
+                ai_tokens_used.labels(
+                    provider="openai",
+                    model=self.model,
+                    token_type="input",
+                ).inc(response.usage.prompt_tokens)
+                
+                ai_tokens_used.labels(
+                    provider="openai",
+                    model=self.model,
+                    token_type="output",
+                ).inc(response.usage.completion_tokens)
+            
+            logger.info("openai_completion_generated", tokens=response.usage.total_tokens if response.usage else 0)
+            return content
+        except Exception as e:
+            status = "error"
+            raise
+        finally:
+            duration = time.time() - start_time
+            ai_api_calls_total.labels(
+                provider="openai",
+                model=self.model,
+                status=status,
+            ).inc()
+            ai_api_duration_seconds.labels(
+                provider="openai",
+                model=self.model,
+            ).observe(duration)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def generate_structured_output(
@@ -109,22 +148,54 @@ class AnthropicClient(BaseLLMClient):
     async def generate_completion(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate a completion from Anthropic."""
         logger.debug("generating_anthropic_completion")
+        
+        start_time = time.time()
+        status = "success"
 
-        kwargs: dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "messages": [{"role": "user", "content": prompt}],
-        }
+        try:
+            kwargs: dict[str, Any] = {
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "messages": [{"role": "user", "content": prompt}],
+            }
 
-        if system_prompt:
-            kwargs["system"] = system_prompt
+            if system_prompt:
+                kwargs["system"] = system_prompt
 
-        response = await self.client.messages.create(**kwargs)
+            response = await self.client.messages.create(**kwargs)
 
-        content = response.content[0].text if response.content else ""
-        logger.info("anthropic_completion_generated", tokens=response.usage.input_tokens + response.usage.output_tokens)
-        return content
+            content = response.content[0].text if response.content else ""
+            
+            # Track token usage
+            ai_tokens_used.labels(
+                provider="anthropic",
+                model=self.model,
+                token_type="input",
+            ).inc(response.usage.input_tokens)
+            
+            ai_tokens_used.labels(
+                provider="anthropic",
+                model=self.model,
+                token_type="output",
+            ).inc(response.usage.output_tokens)
+            
+            logger.info("anthropic_completion_generated", tokens=response.usage.input_tokens + response.usage.output_tokens)
+            return content
+        except Exception as e:
+            status = "error"
+            raise
+        finally:
+            duration = time.time() - start_time
+            ai_api_calls_total.labels(
+                provider="anthropic",
+                model=self.model,
+                status=status,
+            ).inc()
+            ai_api_duration_seconds.labels(
+                provider="anthropic",
+                model=self.model,
+            ).observe(duration)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def generate_structured_output(

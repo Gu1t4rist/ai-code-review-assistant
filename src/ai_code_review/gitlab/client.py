@@ -1,6 +1,7 @@
 """GitLab API client for interacting with GitLab."""
 
 import asyncio
+import time
 from typing import Any
 
 import httpx
@@ -15,6 +16,10 @@ from ai_code_review.gitlab.models import (
     ReviewSummary,
 )
 from ai_code_review.utils.logger import get_logger
+from ai_code_review.utils.metrics import (
+    gitlab_api_calls_total,
+    gitlab_api_duration_seconds,
+)
 
 logger = get_logger(__name__)
 
@@ -65,16 +70,32 @@ class GitLabClient:
     async def get_merge_request(self, project_id: int, mr_iid: int) -> dict[str, Any]:
         """Get a merge request by project ID and MR IID."""
         logger.debug("fetching_merge_request", project_id=project_id, mr_iid=mr_iid)
-        response = await self.client.get(f"/projects/{project_id}/merge_requests/{mr_iid}")
-        response.raise_for_status()
-        mr = response.json()
-        logger.info(
-            "merge_request_fetched",
-            project_id=project_id,
-            mr_iid=mr_iid,
-            mr_title=mr.get("title"),
-        )
-        return mr
+        
+        start_time = time.time()
+        status = "success"
+        try:
+            response = await self.client.get(f"/projects/{project_id}/merge_requests/{mr_iid}")
+            response.raise_for_status()
+            mr = response.json()
+            logger.info(
+                "merge_request_fetched",
+                project_id=project_id,
+                mr_iid=mr_iid,
+                mr_title=mr.get("title"),
+            )
+            return mr
+        except Exception as e:
+            status = "error"
+            raise
+        finally:
+            duration = time.time() - start_time
+            gitlab_api_calls_total.labels(
+                operation="get_merge_request",
+                status=status,
+            ).inc()
+            gitlab_api_duration_seconds.labels(
+                operation="get_merge_request",
+            ).observe(duration)
 
     async def get_merge_request_changes(self, project_id: int, mr_iid: int) -> dict[str, Any]:
         """Get merge request changes (diffs)."""
@@ -150,48 +171,64 @@ class GitLabClient:
             "posting_comment",
             project_id=project_id,
             mr_iid=mr_iid,
-            has_line_ref=bool(file_path and line_number),
+            file_path=file_path,
+            line=line_number,
         )
+        
+        start_time = time.time()
+        status = "success"
+        try:
+            if file_path and line_number:
+                # Try to post inline comment
+                try:
+                    mr = await self.get_merge_request(project_id, mr_iid)
+                    diff_refs = mr.get("diff_refs", {})
+                    
+                    if diff_refs:
+                        # Create discussion with position
+                        payload = {
+                            "body": comment,
+                            "position": {
+                                "position_type": "text",
+                                "new_path": file_path,
+                                "new_line": line_number,
+                                "base_sha": diff_refs.get("base_sha"),
+                                "start_sha": diff_refs.get("start_sha"),
+                                "head_sha": diff_refs.get("head_sha"),
+                            },
+                        }
+                        response = await self.client.post(
+                            f"/projects/{project_id}/merge_requests/{mr_iid}/discussions",
+                            json=payload,
+                        )
+                        response.raise_for_status()
+                        logger.info("inline_comment_posted")
+                        return
+                except Exception as e:
+                    logger.warning("failed_to_post_inline_comment", error=str(e))
+                    # Fallback to regular comment with file reference
+                    comment = f"**File: {file_path}:{line_number}**\n\n{comment}"
 
-        if file_path and line_number:
-            # Try to post inline comment
-            try:
-                mr = await self.get_merge_request(project_id, mr_iid)
-                diff_refs = mr.get("diff_refs", {})
-                
-                if diff_refs:
-                    # Create discussion with position
-                    payload = {
-                        "body": comment,
-                        "position": {
-                            "position_type": "text",
-                            "new_path": file_path,
-                            "new_line": line_number,
-                            "base_sha": diff_refs.get("base_sha"),
-                            "start_sha": diff_refs.get("start_sha"),
-                            "head_sha": diff_refs.get("head_sha"),
-                        },
-                    }
-                    response = await self.client.post(
-                        f"/projects/{project_id}/merge_requests/{mr_iid}/discussions",
-                        json=payload,
-                    )
-                    response.raise_for_status()
-                    logger.info("inline_comment_posted")
-                    return
-            except Exception as e:
-                logger.warning("failed_to_post_inline_comment", error=str(e))
-                # Fallback to regular comment with file reference
-                comment = f"**File: {file_path}:{line_number}**\n\n{comment}"
-
-        # Post general comment (note)
-        payload = {"body": comment}
-        response = await self.client.post(
-            f"/projects/{project_id}/merge_requests/{mr_iid}/notes",
-            json=payload,
-        )
-        response.raise_for_status()
-        logger.info("general_comment_posted")
+            # Post general comment (note)
+            payload = {"body": comment}
+            response = await self.client.post(
+                f"/projects/{project_id}/merge_requests/{mr_iid}/notes",
+                json=payload,
+            )
+            response.raise_for_status()
+            logger.info("general_comment_posted")
+        except Exception as e:
+            status = "error"
+            raise
+        finally:
+            duration = time.time() - start_time
+            gitlab_api_calls_total.labels(
+                operation="post_comment",
+                status=status,
+            ).inc()
+            gitlab_api_duration_seconds.labels(
+                operation="post_comment",
+            ).observe(duration)
 
     async def add_labels(self, project_id: int, mr_iid: int, labels: list[str]) -> None:
         """Add labels to a merge request."""
