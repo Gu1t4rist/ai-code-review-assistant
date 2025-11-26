@@ -7,7 +7,6 @@ from typing import Any
 
 import anthropic
 import openai
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ai_code_review.config import get_settings
 from ai_code_review.utils.logger import get_logger
@@ -48,7 +47,6 @@ class OpenAIClient(BaseLLMClient):
         self.max_tokens = settings.ai_max_tokens
         logger.info("openai_client_initialized", model=self.model)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def generate_completion(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate a completion from OpenAI."""
         logger.debug("generating_openai_completion")
@@ -99,7 +97,6 @@ class OpenAIClient(BaseLLMClient):
                 model=self.model,
             ).observe(duration)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def generate_structured_output(
         self, prompt: str, system_prompt: str | None = None, response_schema: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -144,7 +141,6 @@ class AnthropicClient(BaseLLMClient):
         self.max_tokens = settings.ai_max_tokens
         logger.info("anthropic_client_initialized", model=self.model)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def generate_completion(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate a completion from Anthropic."""
         logger.debug("generating_anthropic_completion")
@@ -197,7 +193,6 @@ class AnthropicClient(BaseLLMClient):
                 model=self.model,
             ).observe(duration)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def generate_structured_output(
         self, prompt: str, system_prompt: str | None = None, response_schema: dict[str, Any] | None = None
     ) -> dict[str, Any]:
