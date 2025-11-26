@@ -1,10 +1,8 @@
 # AI Code Review Assistant
 
 [![CI](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/ci.yml)
-[![Docker Build](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/docker.yml/badge.svg)](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/docker.yml)
-[![Security Scan](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/security.yml/badge.svg)](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/security.yml)
-[![Code Quality](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/code-quality.yml/badge.svg)](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/code-quality.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![CD](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/cd.yml/badge.svg)](https://github.com/Gu1t4rist/ai-code-review-assistant/actions/workflows/cd.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
 AI-агент для автоматизации code review процессов в GitLab. Помогает сеньор-разработчикам проводить ревью кода, анализируя изменения в Merge Requests, проверяя их на соответствие стандартам и формируя рекомендации.
 
@@ -84,16 +82,15 @@ ai-code-review-assistant/
 
 ## Технологический стек
 
-- **Python 3.11+**
-- **GitLab API**: httpx (async)
-- **AI/LLM**: OpenAI API, Anthropic Claude API
-- **Web Framework**: FastAPI (для вебхуков)
-- **Async**: asyncio, aiohttp
-- **Monitoring**: Prometheus metrics
+- **Python 3.10+**
+- **GitLab API**: httpx (async HTTP client)
+- **AI/LLM**: OpenAI GPT-3.5/4, Anthropic Claude 3.5 Sonnet
+- **Web Framework**: FastAPI (async webhooks & API)
+- **Async**: asyncio, httpx AsyncClient
+- **Monitoring**: Prometheus metrics endpoint
 - **Testing**: pytest, pytest-asyncio
-- **Code Analysis**: ast, pylint, flake8
-- **Docker**: для контейнеризации
-- **Logging**: structlog
+- **Docker**: Containerization & deployment
+- **Logging**: structlog (structured JSON logging)
 
 ## Быстрый старт
 
@@ -136,18 +133,15 @@ GITLAB_TOKEN=your-gitlab-token
 GITLAB_WEBHOOK_SECRET=your-webhook-secret
 
 # AI Provider Configuration
-AI_PROVIDER=openai  # or anthropic
-OPENAI_API_KEY=your-openai-key
-ANTHROPIC_API_KEY=your-anthropic-key
+AI_PROVIDER=anthropic  # openai or anthropic
+ANTHROPIC_API_KEY=your-anthropic-key  # or OPENAI_API_KEY
+AI_MODEL=claude-3-5-sonnet-20241022  # or gpt-3.5-turbo
 
 # Application Settings
 LOG_LEVEL=INFO
-MAX_DIFF_SIZE=10000
-REVIEW_TIMEOUT=300  # seconds
 PORT=8000
-
-# Database (optional, for metrics)
-DATABASE_URL=postgresql://user:pass@localhost/ai_review
+MAX_DIFF_SIZE=10000
+MAX_CONCURRENT_REVIEWS=3
 ```
 
 ### Запуск
@@ -250,11 +244,13 @@ curl http://localhost:8000/metrics
 ### 4. API Endpoints
 
 ```bash
-# Healthcheck
+# Health check
 GET /health
+# Response: {"status": "healthy"}
 
-# Webhook endpoint
+# GitLab webhook endpoint
 POST /webhook
+# Accepts GitLab webhook events
 
 # Manual review trigger
 POST /api/v1/review
@@ -262,12 +258,15 @@ POST /api/v1/review
   "project_id": 123,
   "merge_request_iid": 45
 }
+# Response: {"status": "accepted", "message": "Review started"}
 
-# Get review status
-GET /api/v1/review/{review_id}/status
+# Prometheus metrics
+GET /metrics
+# Returns Prometheus metrics in text format
 
-# Get metrics
-GET /api/v1/metrics
+# Application statistics
+GET /api/v1/stats
+# Response: {"ai_provider": "anthropic", "ai_model": "claude-3-5-sonnet-20241022", "status": "running", "version": "1.0.0"}
 ```
 
 ## Типы проверок
@@ -369,24 +368,6 @@ Please address critical and medium severity issues before merging.
 - `ai-review:in-progress` - Анализ выполняется
 - `ai-review:security-risk` - Обнаружены проблемы безопасности
 - `ai-review:performance-issues` - Проблемы производительности
-
-## Мониторинг
-
-Prometheus metrics доступны на `/metrics`:
-  sql_injection_detection: true
-  xss_detection: true
-
-performance:
-  detect_n_plus_one: true
-  check_algorithm_complexity: true
-  memory_leak_detection: true
-
-review_rules:
-  min_test_coverage: 80
-  require_documentation: true
-  max_files_per_mr: 30
-  max_lines_per_mr: 1000
-```
 
 ## Разработка
 

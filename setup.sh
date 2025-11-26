@@ -7,12 +7,12 @@ echo "🚀 Setting up AI Code Review Assistant..."
 
 # Check Python version
 python_version=$(python3 --version 2>&1 | awk '{print $2}')
-required_version="3.11"
+required_version="3.10"
 
 echo "📌 Python version: $python_version"
 
-if ! python3 -c "import sys; exit(0 if sys.version_info >= (3, 11) else 1)"; then
-    echo "❌ Error: Python 3.11 or higher is required"
+if ! python3 -c "import sys; exit(0 if sys.version_info >= (3, 10) else 1)"; then
+    echo "❌ Error: Python 3.10 or higher is required"
     exit 1
 fi
 
@@ -46,14 +46,6 @@ fi
 # Create necessary directories
 echo "📁 Creating directories..."
 mkdir -p logs
-mkdir -p data
-mkdir -p config
-
-# Setup pre-commit hooks (if in development)
-if command -v pre-commit &> /dev/null; then
-    echo "🔗 Setting up pre-commit hooks..."
-    pre-commit install
-fi
 
 echo ""
 echo "✅ Setup complete!"

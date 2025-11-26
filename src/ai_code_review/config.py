@@ -100,15 +100,9 @@ class Settings(BaseSettings):
     enable_auto_labeling: bool = Field(default=True, description="Enable automatic MR labeling")
     enable_metrics: bool = Field(default=True, description="Enable metrics collection")
 
-    # Database Configuration
-    database_url: str | None = Field(
-        default=None,
-        description="Database URL for storing metrics and history",
-    )
-    redis_url: str = Field(
-        default="redis://localhost:6379/0",
-        description="Redis URL for caching",
-    )
+    # Future: Database/Cache Configuration (not implemented yet)
+    # database_url: str | None = None
+    # redis_url: str | None = None
 
     # Monitoring
     sentry_dsn: str | None = Field(default=None, description="Sentry DSN for error tracking")

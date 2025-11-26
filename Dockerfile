@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.10-slim
 
 LABEL maintainer="dev-team@company.com"
 LABEL description="AI Code Review Assistant for GitLab"
@@ -15,6 +15,7 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
@@ -41,7 +42,7 @@ EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health')"
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the application
 CMD ["python", "-m", "ai_code_review.main", "webhook"]
