@@ -104,15 +104,15 @@ class Settings(BaseSettings):
     enable_performance_check: bool = Field(default=True, description="Enable performance checks")
     enable_style_check: bool = Field(default=True, description="Enable style checks")
     enable_auto_labeling: bool = Field(default=True, description="Enable automatic MR labeling")
-    enable_metrics: bool = Field(default=True, description="Enable metrics collection")
+    enable_metrics: bool = Field(default=False, description="Enable metrics collection (future enhancement)")
 
 
-    # Monitoring
+    # Monitoring (Future Enhancement - Currently Disabled)
     sentry_dsn: str | None = Field(default=None, description="Sentry DSN for error tracking")
-    prometheus_enabled: bool = Field(default=True, description="Enable Prometheus metrics")
+    prometheus_enabled: bool = Field(default=False, description="Enable Prometheus metrics")
 
-    # Rate Limiting
-    rate_limit_enabled: bool = Field(default=True, description="Enable rate limiting")
+    # Rate Limiting (Future Enhancement - Currently Disabled)
+    rate_limit_enabled: bool = Field(default=False, description="Enable rate limiting")
     max_requests_per_minute: int = Field(
         default=30,
         ge=1,
@@ -141,16 +141,21 @@ class Settings(BaseSettings):
     @classmethod
     def validate_ai_provider(cls, v: str, info) -> str:
         """Validate that the appropriate API key is set for the selected provider."""
-        values = info.data
-        if v == "openai" and not values.get("openai_api_key"):
+        # Note: This validator runs during __init__, checking the actual parsed values
+        # The validation will happen after all fields are parsed from env/config
+        return v
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization validation after all fields are loaded."""
+        # Now validate API keys after everything is loaded
+        if self.ai_provider == "openai" and not self.openai_api_key:
             raise ValueError("openai_api_key must be set when using OpenAI provider")
-        if v == "anthropic" and not values.get("anthropic_api_key"):
+        if self.ai_provider == "anthropic" and not self.anthropic_api_key:
             raise ValueError("anthropic_api_key must be set when using Anthropic provider")
-        if v == "azure" and (
-            not values.get("azure_openai_endpoint") or not values.get("azure_openai_api_key")
+        if self.ai_provider == "azure" and (
+            not self.azure_openai_endpoint or not self.azure_openai_api_key
         ):
             raise ValueError("Azure OpenAI endpoint and API key must be set when using Azure provider")
-        return v
 
     @property
     def is_production(self) -> bool:

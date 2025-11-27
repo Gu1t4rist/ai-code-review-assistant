@@ -1,4 +1,14 @@
-"""Prometheus metrics instrumentation."""
+"""Prometheus metrics instrumentation.
+
+NOTE: Metrics collection is currently DISABLED by default (enable_metrics=False in config).
+This module is kept for future enhancement. When enabled, it provides:
+- Code review metrics (duration, issues found, files processed)
+- API call metrics (GitLab, AI providers)
+- HTTP request metrics
+- Webhook event metrics
+
+To enable: Set ENABLE_METRICS=true in .env file
+"""
 
 from typing import Callable
 
