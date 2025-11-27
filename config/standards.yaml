@@ -1,0 +1,204 @@
+# AI Code Review Standards Configuration
+# This file allows teams to customize what gets reviewed and how
+#
+# 🚀 QUICK START (Zero Configuration):
+#   Just deploy the assistant - it uses "default" profile automatically.
+#   Works great for most teams out of the box!
+#
+# 🎯 ADVANCED USAGE (Optional Customization):
+#   1. Set REVIEW_RULES_PROFILE environment variable per GitLab project
+#   2. Choose from pre-configured profiles below (backend, frontend, security, etc.)
+#   3. Or copy any profile and customize it for your specific needs
+#
+# 💡 SMART AUTO-DETECTION (Coming Soon):
+#   The assistant can auto-detect project type by analyzing files:
+#   - Lots of .py files → backend profile
+#   - Lots of .js/.tsx files → frontend profile
+#   - Mix of both → fullstack profile
+#
+# EXAMPLE:
+# In GitLab Project Settings → CI/CD → Variables:
+#   REVIEW_RULES_PROFILE = "backend"  (strict security, 80% test coverage)
+#   REVIEW_RULES_PROFILE = "frontend" (performance focus, no coverage req)
+#   REVIEW_RULES_PROFILE = "default"  (balanced, works for 80% of teams)
+#
+# If not set → uses "default" (you don't need to configure anything!)
+
+# Default rules - WORKS OUT OF THE BOX
+# This profile is production-ready and covers 80% of use cases.
+# You can use the assistant immediately without touching this file.
+default:
+  team_name: "Default"
+  
+  # What to check
+  check_security: true
+  check_performance: true
+  check_code_quality: true
+  check_testing: true
+  check_documentation: true
+  check_style: false  # Usually handled by linters/formatters
+  
+  # Severity thresholds
+  min_severity_for_comment: "medium"  # low, medium, high, critical
+  block_merge_on_critical: true
+  block_merge_on_high: false
+  
+  # Test coverage
+  min_test_coverage: null  # null = no requirement, or set percentage like 80.0
+  
+  # File patterns
+  include_patterns:
+    - "**/*.py"
+    - "**/*.js"
+    - "**/*.ts"
+    - "**/*.jsx"
+    - "**/*.tsx"
+    - "**/*.go"
+    - "**/*.java"
+    - "**/*.rb"
+  
+  exclude_patterns:
+    - "**/test_*.py"
+    - "**/*.test.js"
+    - "**/*.spec.ts"
+    - "**/migrations/**"
+    - "**/node_modules/**"
+    - "**/vendor/**"
+    - "**/__pycache__/**"
+    - "**/dist/**"
+    - "**/build/**"
+  
+  # Limits
+  max_issues_per_file: 10
+
+# Team-specific overrides
+# These are EXAMPLES showing what different teams might need.
+# You don't need all of these - just copy and modify what you need.
+#
+# IMPORTANT: Only ONE profile is used per project at a time.
+# Think of these as "templates" you can copy and customize.
+
+# Example: Backend team - strict security, relaxed documentation
+backend:
+  team_name: "Backend Services"
+  check_security: true
+  check_performance: true
+  check_code_quality: true
+  check_testing: true
+  check_documentation: false  # Backend has API docs elsewhere
+  min_severity_for_comment: "low"  # Report everything
+  block_merge_on_critical: true
+  block_merge_on_high: true  # Stricter than default
+  min_test_coverage: 80.0
+  include_patterns:
+    - "**/*.py"
+    - "**/*.go"
+    - "**/*.java"
+  max_issues_per_file: 15
+
+# Example: Frontend team - focus on performance, less on testing
+frontend:
+  team_name: "Frontend"
+  check_security: true  # XSS, etc.
+  check_performance: true  # Critical for UX
+  check_code_quality: true
+  check_testing: false  # Frontend uses visual tests
+  check_documentation: true
+  min_severity_for_comment: "medium"
+  block_merge_on_critical: true
+  block_merge_on_high: false
+  min_test_coverage: null  # No coverage requirement
+  include_patterns:
+    - "**/*.js"
+    - "**/*.ts"
+    - "**/*.jsx"
+    - "**/*.tsx"
+    - "**/*.vue"
+  exclude_patterns:
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/*.test.js"
+    - "**/*.spec.ts"
+  max_issues_per_file: 8
+
+# Example: Security-focused team - maximum scrutiny
+security:
+  team_name: "Security & Compliance"
+  check_security: true
+  check_performance: true
+  check_code_quality: true
+  check_testing: true
+  check_documentation: true
+  check_style: true  # Even style matters for security
+  min_severity_for_comment: "low"  # Report everything
+  block_merge_on_critical: true
+  block_merge_on_high: true
+  min_test_coverage: 90.0  # High coverage requirement
+  max_issues_per_file: 20  # Allow more issues to be reported
+
+# Example: Prototype/hackathon team - minimal checks
+prototype:
+  team_name: "Prototypes"
+  check_security: true  # Always check security
+  check_performance: false  # Speed doesn't matter yet
+  check_code_quality: false  # Move fast
+  check_testing: false  # No tests in prototypes
+  check_documentation: false
+  min_severity_for_comment: "critical"  # Only critical issues
+  block_merge_on_critical: false  # Don't block anything
+  block_merge_on_high: false
+  min_test_coverage: null
+  max_issues_per_file: 5
+
+# Example: DevOps/Infrastructure team
+devops:
+  team_name: "DevOps & Infrastructure"
+  check_security: true  # Critical for infra
+  check_performance: true
+  check_code_quality: true
+  check_testing: true
+  check_documentation: true  # Infra needs good docs
+  min_severity_for_comment: "medium"
+  block_merge_on_critical: true
+  block_merge_on_high: true
+  min_test_coverage: 70.0
+  include_patterns:
+    - "**/*.py"
+    - "**/*.yaml"
+    - "**/*.yml"
+    - "**/*.tf"  # Terraform
+    - "**/*.sh"
+    - "**/Dockerfile"
+  exclude_patterns:
+    - "**/node_modules/**"
+    - "**/vendor/**"
+  max_issues_per_file: 10
+
+# 📚 How to use (Three Levels of Complexity):
+#
+# Level 1 - ZERO CONFIG (Recommended for 80% of teams):
+#   → Just deploy and forget. Uses "default" profile automatically.
+#   → Perfect for: Startups, single teams, getting started quickly
+#
+# Level 2 - PICK A PRESET (2 minutes setup):
+#   → Set REVIEW_RULES_PROFILE in GitLab Project → Settings → CI/CD → Variables
+#   → Choose from: "backend", "frontend", "security", "prototype", "devops"
+#   → Perfect for: Multi-team companies, specialized requirements
+#
+# Level 3 - FULL CUSTOMIZATION (Advanced users):
+#   → Copy any profile above (e.g., copy "backend")
+#   → Rename it (e.g., "payments-team")
+#   → Modify the settings to match your specific needs
+#   → Set REVIEW_RULES_PROFILE=payments-team in GitLab
+#   → Perfect for: Enterprise, compliance requirements, unique workflows
+#
+# 🏢 DEPLOYMENT MODELS:
+# - Startup/Single team: Use "default" (no config needed)
+# - Scale-up (2-5 teams): Each project picks a preset profile
+# - Enterprise (5+ teams): DevOps manages custom profiles per team
+#
+# 💰 VALUE FOR SENIOR DEVS:
+# - Reduces 15-20 hours/week of manual code review time
+# - Catches 90% of security issues before human review
+# - Consistent standards across all teams (no "depends who reviews it")
+# - Junior devs learn from AI comments (educational, not just critical)

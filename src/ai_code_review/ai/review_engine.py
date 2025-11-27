@@ -13,7 +13,7 @@ from ai_code_review.ai.prompts import (
     get_security_analysis_prompt,
     get_test_coverage_prompt,
 )
-from ai_code_review.config import get_settings
+from ai_code_review.config import get_review_rules, get_settings
 from ai_code_review.gitlab.models import (
     DiffChange,
     IssueCategory,
@@ -21,6 +21,7 @@ from ai_code_review.gitlab.models import (
     MergeRequestInfo,
     ReviewIssue,
     ReviewRecommendation,
+    ReviewRuleConfig,
     ReviewSummary,
 )
 from ai_code_review.utils.logger import get_logger
@@ -38,11 +39,36 @@ logger = get_logger(__name__)
 class CodeReviewEngine:
     """Engine for AI-powered code review."""
 
-    def __init__(self) -> None:
-        """Initialize code review engine."""
+    def __init__(self, review_rules: ReviewRuleConfig | None = None) -> None:
+        """
+        Initialize code review engine.
+        
+        Args:
+            review_rules: Optional review rules config. If None, loads from settings.
+        """
         self.settings = get_settings()
         self.llm_client = get_llm_client()
-        logger.info("code_review_engine_initialized")
+        
+        # Load review rules (team-specific or default)
+        if review_rules is None:
+            try:
+                self.review_rules = get_review_rules()
+                logger.info("review_rules_loaded", profile=self.review_rules.team_name)
+            except Exception as e:
+                logger.warning("failed_to_load_review_rules", error=str(e))
+                # Fallback to default rules
+                self.review_rules = ReviewRuleConfig()
+                logger.info("using_default_review_rules")
+        else:
+            self.review_rules = review_rules
+        
+        logger.info(
+            "code_review_engine_initialized",
+            team=self.review_rules.team_name,
+            security=self.review_rules.check_security,
+            performance=self.review_rules.check_performance,
+            quality=self.review_rules.check_code_quality,
+        )
 
     async def review_merge_request(self, mr_info: MergeRequestInfo) -> ReviewSummary:
         """Perform complete review of a merge request."""
@@ -90,19 +116,28 @@ class CodeReviewEngine:
                     continue
                 if result:
                     file_reviews.append(result)
-                    all_issues.extend(result.get("issues", []))
+                    # Filter issues by severity threshold and max per file
+                    issues = result.get("issues", [])
+                    filtered_issues = self._filter_issues_by_severity(issues)[:self.review_rules.max_issues_per_file]
+                    all_issues.extend(filtered_issues)
 
-            # Additional analyses if enabled
-            if self.settings.enable_security_scan:
+            # Additional analyses based on review rules
+            if self.review_rules.check_security and self.settings.enable_security_scan:
+                logger.debug("performing_security_scan")
                 security_issues = await self._perform_security_scan(changes_to_review)
-                all_issues.extend(security_issues)
+                filtered_security = self._filter_issues_by_severity(security_issues)
+                all_issues.extend(filtered_security)
 
-            if self.settings.enable_performance_check:
+            if self.review_rules.check_performance and self.settings.enable_performance_check:
+                logger.debug("performing_performance_check")
                 performance_issues = await self._perform_performance_check(changes_to_review)
-                all_issues.extend(performance_issues)
+                filtered_performance = self._filter_issues_by_severity(performance_issues)
+                all_issues.extend(filtered_performance)
 
-            # Analyze test coverage
-            test_coverage = await self._analyze_test_coverage(mr_info)
+            # Analyze test coverage (if enabled in rules)
+            test_coverage = None
+            if self.review_rules.check_testing:
+                test_coverage = await self._analyze_test_coverage(mr_info)
 
             # Generate overall summary
             summary = await self._generate_summary(mr_info, file_reviews, all_issues, test_coverage)
@@ -143,7 +178,7 @@ class CodeReviewEngine:
             active_reviews.dec()
 
     def _filter_changes(self, changes: list[DiffChange]) -> list[DiffChange]:
-        """Filter changes based on review settings."""
+        """Filter changes based on review settings and rules."""
         filtered = []
 
         for change in changes:
@@ -161,14 +196,32 @@ class CodeReviewEngine:
                 )
                 continue
 
-            # Skip binary files and generated files
-            if self._is_ignored_file(change.file_path):
+            # Check against include/exclude patterns from review rules
+            if not self._should_review_file(change.file_path):
+                logger.debug("skipping_file_by_rules", file_path=change.file_path)
                 continue
 
             filtered.append(change)
 
         logger.info("filtered_changes", original=len(changes), filtered=len(filtered))
         return filtered
+    
+    def _should_review_file(self, file_path: str) -> bool:
+        """Check if file should be reviewed based on rules patterns."""
+        from fnmatch import fnmatch
+        
+        # Check exclude patterns first
+        for pattern in self.review_rules.exclude_patterns:
+            if fnmatch(file_path, pattern):
+                return False
+        
+        # Check include patterns
+        for pattern in self.review_rules.include_patterns:
+            if fnmatch(file_path, pattern):
+                return True
+        
+        # Default: don't review if no patterns match
+        return False
 
     def _is_ignored_file(self, file_path: str) -> bool:
         """Check if file should be ignored in review."""
@@ -390,12 +443,17 @@ class CodeReviewEngine:
         )
 
     def _rule_based_recommendation(self, issues: list[ReviewIssue]) -> ReviewRecommendation:
-        """Generate recommendation based on issue severity."""
+        """Generate recommendation based on issue severity and review rules."""
         critical_count = sum(1 for issue in issues if issue.severity == IssueSeverity.CRITICAL)
         high_count = sum(1 for issue in issues if issue.severity == IssueSeverity.HIGH)
 
-        if critical_count > 0:
+        # Check if we should block based on review rules
+        if self.review_rules.block_merge_on_critical and critical_count > 0:
             return ReviewRecommendation.REJECT
+        elif self.review_rules.block_merge_on_high and high_count > 0:
+            return ReviewRecommendation.NEEDS_FIXES
+        elif critical_count > 0:  # Critical without block rule
+            return ReviewRecommendation.NEEDS_FIXES
         elif high_count > 3:
             return ReviewRecommendation.NEEDS_FIXES
         elif high_count > 0 or len(issues) > 5:
@@ -403,6 +461,32 @@ class CodeReviewEngine:
         else:
             return ReviewRecommendation.APPROVE
 
+    def _filter_issues_by_severity(self, issues: list[ReviewIssue]) -> list[ReviewIssue]:
+        """Filter issues based on minimum severity threshold from review rules."""
+        severity_order = {
+            IssueSeverity.CRITICAL: 4,
+            IssueSeverity.HIGH: 3,
+            IssueSeverity.MEDIUM: 2,
+            IssueSeverity.LOW: 1,
+            IssueSeverity.INFO: 0,
+        }
+        
+        min_severity_value = severity_order.get(self.review_rules.min_severity_for_comment, 2)
+        
+        filtered = [
+            issue for issue in issues
+            if severity_order.get(issue.severity, 0) >= min_severity_value
+        ]
+        
+        logger.debug(
+            "filtered_issues_by_severity",
+            original_count=len(issues),
+            filtered_count=len(filtered),
+            min_severity=self.review_rules.min_severity_for_comment.value,
+        )
+        
+        return filtered
+    
     def _is_code_file(self, file_path: str) -> bool:
         """Check if file is a code file."""
         code_extensions = [".py", ".js", ".ts", ".java", ".go", ".rb", ".php", ".cpp", ".c", ".cs", ".rs"]

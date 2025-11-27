@@ -1,10 +1,16 @@
 """Configuration management for AI Code Review Assistant."""
 
+import os
 from functools import lru_cache
-from typing import Literal
+from pathlib import Path
+from typing import Literal, TYPE_CHECKING
 
-from pydantic import Field, field_validator
+import yaml
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from ai_code_review.gitlab.models import ReviewRuleConfig
 
 
 class Settings(BaseSettings):
@@ -100,9 +106,6 @@ class Settings(BaseSettings):
     enable_auto_labeling: bool = Field(default=True, description="Enable automatic MR labeling")
     enable_metrics: bool = Field(default=True, description="Enable metrics collection")
 
-    # Future: Database/Cache Configuration (not implemented yet)
-    # database_url: str | None = None
-    # redis_url: str | None = None
 
     # Monitoring
     sentry_dsn: str | None = Field(default=None, description="Sentry DSN for error tracking")
@@ -123,6 +126,16 @@ class Settings(BaseSettings):
     # Cache
     cache_enabled: bool = Field(default=True, description="Enable caching")
     cache_ttl: int = Field(default=3600, ge=60, description="Cache TTL in seconds")
+    
+    # Review Rules Configuration
+    review_rules_profile: str = Field(
+        default="default",
+        description="Review rules profile to use from standards.yaml (e.g., 'backend', 'frontend', 'security')"
+    )
+    review_rules_config_path: str = Field(
+        default="config/standards.yaml",
+        description="Path to review rules configuration file"
+    )
 
     @field_validator("ai_provider")
     @classmethod
@@ -154,3 +167,71 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
+
+def load_review_rules(profile: str | None = None) -> "ReviewRuleConfig":
+    """
+    Load review rules from standards.yaml.
+    
+    Args:
+        profile: Profile name to load (e.g., 'backend', 'frontend').
+                 If None, uses REVIEW_RULES_PROFILE env var or 'default'.
+    
+    Returns:
+        ReviewRuleConfig with the loaded rules.
+    
+    Raises:
+        FileNotFoundError: If config file not found.
+        ValueError: If profile not found in config.
+    """
+    from ai_code_review.gitlab.models import ReviewRuleConfig
+    
+    settings = get_settings()
+    
+    # Determine which profile to use
+    if profile is None:
+        profile = os.getenv("REVIEW_RULES_PROFILE", settings.review_rules_profile)
+    
+    # Resolve config file path
+    config_path = Path(settings.review_rules_config_path)
+    if not config_path.is_absolute():
+        # Try relative to project root
+        project_root = Path(__file__).parent.parent.parent
+        config_path = project_root / config_path
+    
+    if not config_path.exists():
+        raise FileNotFoundError(f"Review rules config not found at {config_path}")
+    
+    # Load YAML
+    with open(config_path, "r") as f:
+        config_data = yaml.safe_load(f)
+    
+    if not config_data:
+        raise ValueError(f"Empty config file at {config_path}")
+    
+    # Get profile-specific rules
+    if profile not in config_data:
+        available_profiles = ", ".join(config_data.keys())
+        raise ValueError(
+            f"Profile '{profile}' not found in {config_path}. "
+            f"Available profiles: {available_profiles}"
+        )
+    
+    profile_data = config_data[profile]
+    
+    # Convert YAML data to ReviewRuleConfig
+    return ReviewRuleConfig(**profile_data)
+
+
+@lru_cache
+def get_review_rules(profile: str | None = None) -> "ReviewRuleConfig":
+    """
+    Get cached review rules for a profile.
+    
+    Args:
+        profile: Profile name to load (cached per profile).
+    
+    Returns:
+        Cached ReviewRuleConfig instance.
+    """
+    return load_review_rules(profile)

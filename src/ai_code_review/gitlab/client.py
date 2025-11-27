@@ -296,6 +296,108 @@ class GitLabClient:
 
         logger.info("review_labels_updated", labels=labels_to_add)
 
+    async def update_mr_description_with_summary(self, project_id: int, mr_iid: int, summary: ReviewSummary) -> None:
+        """Update MR description with AI review summary."""
+        logger.info("updating_mr_description", project_id=project_id, mr_iid=mr_iid)
+        
+        try:
+            # Get current MR
+            mr = await self.get_merge_request(project_id, mr_iid)
+            original_description = mr.get("description", "")
+            
+            # Create AI summary section
+            ai_summary = self._format_description_summary(summary)
+            
+            # Check if AI summary already exists in description
+            ai_summary_marker = "<!-- AI_REVIEW_SUMMARY -->"
+            
+            if ai_summary_marker in original_description:
+                # Replace existing AI summary
+                parts = original_description.split(ai_summary_marker)
+                if len(parts) >= 2:
+                    # Keep original description before marker
+                    new_description = parts[0].rstrip() + "\n\n" + ai_summary_marker + "\n" + ai_summary
+                else:
+                    new_description = original_description + "\n\n" + ai_summary_marker + "\n" + ai_summary
+            else:
+                # Append AI summary to existing description
+                if original_description:
+                    new_description = original_description + "\n\n---\n\n" + ai_summary_marker + "\n" + ai_summary
+                else:
+                    new_description = ai_summary_marker + "\n" + ai_summary
+            
+            # Update MR description
+            payload = {"description": new_description}
+            response = await self.client.put(
+                f"/projects/{project_id}/merge_requests/{mr_iid}",
+                json=payload,
+            )
+            response.raise_for_status()
+            logger.info("mr_description_updated")
+        except Exception as e:
+            logger.error("failed_to_update_mr_description", error=str(e))
+            # Don't fail the entire review if description update fails
+
+    def _format_description_summary(self, summary: ReviewSummary) -> str:
+        """Format AI review summary for MR description."""
+        # Recommendation emoji and status
+        rec_emoji = {
+            "approve": "✅",
+            "needs_fixes": "⚠️",
+            "reject": "❌",
+        }
+        
+        rec_status = {
+            "approve": "Approved",
+            "needs_fixes": "Needs Fixes",
+            "reject": "Rejected",
+        }
+        
+        emoji = rec_emoji.get(summary.recommendation.value, "📊")
+        status = rec_status.get(summary.recommendation.value, summary.recommendation.value)
+        
+        lines = [
+            "## 🤖 AI Code Review Summary",
+            "",
+            f"**Status:** {emoji} {status} ({len(summary.issues)} issue{'s' if len(summary.issues) != 1 else ''} found)",
+            "",
+        ]
+        
+        # Critical/High issues summary
+        critical_count = len(summary.critical_issues)
+        high_count = len(summary.high_issues)
+        
+        if critical_count > 0:
+            lines.append(f"**Security/Critical:** 🔴 {critical_count} critical issue{'s' if critical_count != 1 else ''} found")
+            for issue in summary.critical_issues[:3]:  # Show top 3
+                lines.append(f"- {issue.title} in `{issue.file_path}`" + (f":{issue.line_number}" if issue.line_number else ""))
+            if critical_count > 3:
+                lines.append(f"- ... and {critical_count - 3} more")
+            lines.append("")
+        
+        if high_count > 0:
+            lines.append(f"**Performance/High:** 🟡 {high_count} important issue{'s' if high_count != 1 else ''}")
+            for issue in summary.high_issues[:2]:  # Show top 2
+                lines.append(f"- {issue.title}")
+            if high_count > 2:
+                lines.append(f"- ... and {high_count - 2} more")
+            lines.append("")
+        
+        # Code quality highlights
+        if summary.positive_points:
+            lines.append(f"**Code Quality:** ✅ {summary.positive_points[0]}")
+            lines.append("")
+        
+        # Test coverage
+        if summary.test_coverage is not None:
+            coverage_emoji = "✅" if summary.test_coverage >= 80 else "⚠️" if summary.test_coverage >= 60 else "❌"
+            lines.append(f"**Test Coverage:** {coverage_emoji} {summary.test_coverage:.0f}%")
+            lines.append("")
+        
+        lines.append("📝 *[View detailed review comments below](#note_)*")
+        
+        return "\n".join(lines)
+
     async def post_review_summary(self, project_id: int, mr_iid: int, summary: ReviewSummary) -> None:
         """Post a comprehensive review summary as a comment."""
         logger.info("posting_review_summary", project_id=project_id, mr_iid=mr_iid)
@@ -308,6 +410,9 @@ class GitLabClient:
 
         # Update labels
         await self.update_labels_for_review(project_id, mr_iid, summary)
+        
+        # Update MR description with AI summary
+        await self.update_mr_description_with_summary(project_id, mr_iid, summary)
 
         logger.info("review_summary_posted")
 

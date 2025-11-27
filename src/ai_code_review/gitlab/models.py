@@ -148,6 +148,59 @@ class WebhookEvent(BaseModel):
     user: dict[str, Any] | None = None
 
 
+class ReviewRuleConfig(BaseModel):
+    """Configuration for what to check in code reviews."""
+    
+    # Categories to check
+    check_security: bool = Field(default=True, description="Run security vulnerability checks")
+    check_performance: bool = Field(default=True, description="Run performance analysis")
+    check_code_quality: bool = Field(default=True, description="Run code quality checks")
+    check_testing: bool = Field(default=True, description="Check test coverage and quality")
+    check_documentation: bool = Field(default=True, description="Check documentation completeness")
+    check_style: bool = Field(default=False, description="Check code style (usually handled by linters)")
+    
+    # Severity thresholds
+    min_severity_for_comment: IssueSeverity = Field(
+        default=IssueSeverity.MEDIUM,
+        description="Minimum severity to post as comment (lower severities are logged only)"
+    )
+    block_merge_on_critical: bool = Field(
+        default=True,
+        description="Block merge if critical issues found"
+    )
+    block_merge_on_high: bool = Field(
+        default=False,
+        description="Block merge if high severity issues found"
+    )
+    
+    # Test coverage requirements
+    min_test_coverage: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=100.0,
+        description="Minimum test coverage percentage (None = no requirement)"
+    )
+    
+    # File patterns to include/exclude
+    include_patterns: list[str] = Field(
+        default_factory=lambda: ["**/*.py", "**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx"],
+        description="File patterns to include in review"
+    )
+    exclude_patterns: list[str] = Field(
+        default_factory=lambda: ["**/test_*.py", "**/*.test.js", "**/migrations/**", "**/node_modules/**"],
+        description="File patterns to exclude from review"
+    )
+    
+    # Team-specific settings
+    team_name: str | None = Field(default=None, description="Team name for these rules")
+    max_issues_per_file: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum issues to report per file (prevent spam)"
+    )
+
+
 class MergeRequestLabel(str, Enum):
     """Predefined MR labels for AI review."""
 
