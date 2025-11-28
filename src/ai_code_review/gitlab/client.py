@@ -137,8 +137,14 @@ class GitLabClient:
 
     def _parse_changes(self, changes_data: dict[str, Any]) -> list[DiffChange]:
         """Parse changes from GitLab API response."""
+        logger.info("parsing_changes", raw_changes_count=len(changes_data.get("changes", [])), has_diffs_key=("diffs" in changes_data))
+        
+        # GitLab can return changes in "changes" or "diffs" key
+        raw_changes = changes_data.get("changes") or changes_data.get("diffs", [])
+        logger.info("found_changes", count=len(raw_changes))
+        
         changes = []
-        for change in changes_data.get("changes", []):
+        for change in raw_changes:
             diff_change = DiffChange(
                 file_path=change.get("new_path", change.get("old_path", "")),
                 old_path=change.get("old_path"),
@@ -155,7 +161,7 @@ class GitLabClient:
 
             changes.append(diff_change)
 
-        logger.debug("parsed_changes", total_files=len(changes))
+        logger.info("parsed_changes", total_files=len(changes))
         return changes
 
     async def post_comment(

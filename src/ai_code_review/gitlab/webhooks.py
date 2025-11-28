@@ -69,8 +69,8 @@ class WebhookHandler:
             state=state,
         )
 
-        # Only process opened and updated MRs
-        if action not in ["open", "update", "reopen"]:
+        # Only process when MR is first opened or reopened (NOT updates to avoid infinite loops)
+        if action not in ["open", "reopen"]:
             logger.info("ignoring_mr_action", action=action)
             return {"status": "ignored", "reason": f"Action '{action}' not processed"}
 

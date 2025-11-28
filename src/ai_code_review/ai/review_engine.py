@@ -120,19 +120,10 @@ class CodeReviewEngine:
                     issues = result.get("issues", [])
                     filtered_issues = self._filter_issues_by_severity(issues)[:self.review_rules.max_issues_per_file]
                     all_issues.extend(filtered_issues)
-
-            # Additional analyses based on review rules
-            if self.review_rules.check_security and self.settings.enable_security_scan:
-                logger.debug("performing_security_scan")
-                security_issues = await self._perform_security_scan(changes_to_review)
-                filtered_security = self._filter_issues_by_severity(security_issues)
-                all_issues.extend(filtered_security)
-
-            if self.review_rules.check_performance and self.settings.enable_performance_check:
-                logger.debug("performing_performance_check")
-                performance_issues = await self._perform_performance_check(changes_to_review)
-                filtered_performance = self._filter_issues_by_severity(performance_issues)
-                all_issues.extend(filtered_performance)
+            
+            
+            # Deduplicate issues (same line + similar title)
+            all_issues = self._deduplicate_issues(all_issues)
 
             # Analyze test coverage (if enabled in rules)
             test_coverage = None
@@ -182,8 +173,11 @@ class CodeReviewEngine:
         filtered = []
 
         for change in changes:
+            logger.info("checking_file", file_path=change.file_path, deleted=change.deleted_file, additions=change.additions, deletions=change.deletions)
+            
             # Skip deleted files
             if change.deleted_file:
+                logger.info("skipping_deleted_file", file_path=change.file_path)
                 continue
 
             # Skip large files
@@ -198,10 +192,11 @@ class CodeReviewEngine:
 
             # Check against include/exclude patterns from review rules
             if not self._should_review_file(change.file_path):
-                logger.debug("skipping_file_by_rules", file_path=change.file_path)
+                logger.warning("file_filtered_by_pattern", file_path=change.file_path)
                 continue
 
             filtered.append(change)
+            logger.info("file_accepted_for_review", file_path=change.file_path)
 
         logger.info("filtered_changes", original=len(changes), filtered=len(filtered))
         return filtered
@@ -212,15 +207,20 @@ class CodeReviewEngine:
         
         # Check exclude patterns first
         for pattern in self.review_rules.exclude_patterns:
-            if fnmatch(file_path, pattern):
+            # Handle both glob patterns and simple matches
+            if fnmatch(file_path, pattern) or fnmatch(f"**/{file_path}", pattern):
+                logger.info("file_excluded", file_path=file_path, pattern=pattern)
                 return False
         
         # Check include patterns
         for pattern in self.review_rules.include_patterns:
-            if fnmatch(file_path, pattern):
+            # Handle both glob patterns and simple matches
+            if fnmatch(file_path, pattern) or fnmatch(f"**/{file_path}", pattern):
+                logger.info("file_included", file_path=file_path, pattern=pattern)
                 return True
         
         # Default: don't review if no patterns match
+        logger.info("file_not_matched", file_path=file_path, patterns=self.review_rules.include_patterns)
         return False
 
     def _is_ignored_file(self, file_path: str) -> bool:
@@ -292,6 +292,28 @@ class CodeReviewEngine:
         except Exception as e:
             logger.error("file_review_error", file_path=change.file_path, error=str(e))
             return {"file_path": change.file_path, "issues": [], "positive_points": [], "assessment": "Review failed"}
+
+    def _deduplicate_issues(self, issues: list[ReviewIssue]) -> list[ReviewIssue]:
+        """Remove duplicate issues based on file path, line number, and similar titles."""
+        seen = set()
+        unique_issues = []
+        
+        for issue in issues:
+            # Create key from file, line, and normalized title
+            key = (
+                issue.file_path,
+                issue.line_number,
+                issue.title.lower().strip()[:50]  # First 50 chars of title
+            )
+            
+            if key not in seen:
+                seen.add(key)
+                unique_issues.append(issue)
+            else:
+                logger.debug("duplicate_issue_removed", file=issue.file_path, line=issue.line_number, title=issue.title)
+        
+        logger.info("deduplication_complete", original=len(issues), unique=len(unique_issues))
+        return unique_issues
 
     async def _perform_security_scan(self, changes: list[DiffChange]) -> list[ReviewIssue]:
         """Perform focused security analysis."""

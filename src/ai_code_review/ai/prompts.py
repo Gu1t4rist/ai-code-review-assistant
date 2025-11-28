@@ -21,7 +21,10 @@ Be thorough but pragmatic. Prioritize critical issues over minor style preferenc
 Provide specific examples and references when possible."""
 
 # Template for analyzing a single file change
-FILE_ANALYSIS_PROMPT = """Review the following code change and identify any issues:
+FILE_ANALYSIS_PROMPT = """Review this code change. For EACH issue found, provide:
+1. WHERE: Exact line number and what code has the problem
+2. WHY: Why this is a problem (security risk, performance issue, bug, etc.)
+3. HOW TO FIX: Code solution OR example showing how to solve it
 
 File: {file_path}
 Change Type: {change_type}
@@ -34,27 +37,21 @@ Diff:
 MR Description:
 {mr_description}
 
-Analyze this change and provide:
-1. List of issues found (severity, category, description, line number, suggestion)
-2. Positive aspects of the implementation
-3. Overall assessment
+Be CONCISE. Only report REAL issues. NO generic advice.
 
-Respond with JSON in the following format:
+Respond with JSON:
 {{
     "issues": [
         {{
-            "severity": "critical|high|medium|low|info",
-            "category": "security|performance|code_quality|style|documentation|testing|architecture|bug",
+            "severity": "critical|high|medium|low",
+            "category": "security|performance|bug|code_quality",
             "title": "Brief issue title",
-            "description": "Detailed description",
+            "description": "WHY this is a problem",
             "line_number": 42,
-            "suggestion": "How to fix",
-            "code_snippet": "Example of correct implementation",
-            "references": ["URL to documentation"]
+            "suggestion": "HOW to fix it - concrete code solution OR example approach",
+            "code_snippet": "Code solution if applicable, or example implementation"
         }}
-    ],
-    "positive_points": ["Good use of...", "Well-tested..."],
-    "assessment": "Overall comment about this file change"
+    ]
 }}"""
 
 # Template for generating overall MR summary
